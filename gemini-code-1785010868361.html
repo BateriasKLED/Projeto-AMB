@@ -1,0 +1,684 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SistemAmb - Monitoramento de Sinais Vitais</title>
+    
+    <!-- 
+      IMPORTAÇÃO DE DEPENDÊNCIAS VIA CDN:
+      O que faz: Carrega Tailwind CSS para estilização moderna, Chart.js para os gráficos de linhas e Lucide para os ícones.
+      Qual o objetivo: Garantir a execução imediata e leve diretamente no navegador sem necessidade de setup Node.js ou bundlers.
+    -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+</head>
+<body class="bg-slate-50 text-slate-800 font-sans min-h-screen flex flex-col">
+
+    <!-- 
+      CABEÇALHO DA APLICAÇÃO (HEADER):
+      O que faz: Renderiza a barra superior da aplicação.
+      Qual o objetivo: Exibir a identidade do sistema e manter a padronização visual em todas as páginas.
+    -->
+    <header class="bg-indigo-700 text-white shadow-md">
+        <div class="max-w-7xl mx-auto px-4 py-4 flex justify-between items-center">
+            <div class="flex items-center gap-3">
+                <i data-lucide="activity" class="w-8 h-8 text-emerald-400"></i>
+                <h1 class="text-xl font-bold tracking-wide">SistemAmb | Monitoramento Ambulatorial</h1>
+            </div>
+            <span class="text-xs bg-indigo-800 px-3 py-1 rounded-full text-indigo-200 border border-indigo-600">
+                Módulo Clínico v1.4
+            </span>
+        </div>
+    </header>
+
+    <!-- 
+      CONTAINER PRINCIPAL (SPA CONTAINER):
+      O que faz: Atua como área de montagem dinâmica para as telas da aplicação.
+      Qual o objetivo: Alternar as páginas (Página 1 e Página 2) sem recarregar o navegador.
+    -->
+    <main id="app" class="flex-1 max-w-7xl w-full mx-auto p-4 md:p-6"></main>
+
+    <!-- 
+      RODAPÉ DA APLICAÇÃO (FOOTER):
+      O que faz: Exibe créditos e avisos operacionais no rodapé.
+      Qual o objetivo: Reforçar o direcionamento para ambiente exclusivamente ambulatorial.
+    -->
+    <footer class="bg-slate-200 text-slate-600 text-center py-3 text-xs border-t border-slate-300">
+        <p>SistemAmb - Sistema Orientado para Acompanhamento Ambulatorial e Consultórios.</p>
+    </footer>
+
+    <!-- LÓGICA DA APLICAÇÃO (ESTADO, ROTAS, VERIFICAÇÃO CLÍNICA E INTERFACE) -->
+    <script>
+        /**
+         * ESTADO GLOBAL DA APLICAÇÃO (APP STATE):
+         * O que faz: Centraliza a lista de pacientes, o histórico de sinais vitais e a rota ativa.
+         * Qual o objetivo: Manter a sincronia de dados em memória e controlar a navegação SPA.
+         */
+        const state = {
+            currentPage: 'patients-list', // Define a rota ativa: 'patients-list' (Página 1) ou 'patient-monitoring' (Página 2)
+            selectedPatientId: null,      // Guarda o ID do paciente ativo no monitoramento
+            chartInstance: null,          // Armazena a referência da instância Chart.js
+            
+            // Coleção de pacientes cadastrados no sistema
+            patients: [
+                {
+                    id: 1,
+                    name: "Maria Silva",
+                    age: 58,
+                    document: "123.456.789-00",
+                    bed: "Consultório 02 / Leito A",
+                    history: [
+                        { timestamp: "25/07 09:00", fc: 72, paSystolic: 120, paDiastolic: 80, spo2: 98, temp: 36.5 },
+                        { timestamp: "25/07 11:00", fc: 75, paSystolic: 122, paDiastolic: 82, spo2: 97, temp: 36.6 },
+                        { timestamp: "25/07 13:00", fc: 78, paSystolic: 125, paDiastolic: 80, spo2: 98, temp: 36.7 },
+                        { timestamp: "25/07 15:00", fc: 82, paSystolic: 130, paDiastolic: 85, spo2: 96, temp: 36.8 },
+                        { timestamp: "25/07 17:00", fc: 80, paSystolic: 128, paDiastolic: 84, spo2: 97, temp: 36.6 } // PA 128/84 (Agora DENTRO do limite 90/60 - 140/90)
+                    ]
+                },
+                {
+                    id: 2,
+                    name: "João Santos",
+                    age: 64,
+                    document: "987.654.321-11",
+                    bed: "Sala de Observação / Leito 01",
+                    history: [
+                        { timestamp: "25/07 10:00", fc: 88, paSystolic: 140, paDiastolic: 90, spo2: 95, temp: 37.1 },
+                        { timestamp: "25/07 12:00", fc: 85, paSystolic: 138, paDiastolic: 88, spo2: 95, temp: 37.0 },
+                        { timestamp: "25/07 14:00", fc: 90, paSystolic: 142, paDiastolic: 92, spo2: 94, temp: 37.2 },
+                        { timestamp: "25/07 16:00", fc: 88, paSystolic: 139, paDiastolic: 89, spo2: 96, temp: 37.0 },
+                        { timestamp: "25/07 17:30", fc: 86, paSystolic: 145, paDiastolic: 92, spo2: 96, temp: 36.9 } // PA 145/92 (FORA da referência 90/60 - 140/90 -> Ativa o Alerta)
+                    ]
+                },
+                {
+                    id: 3,
+                    name: "Ana Oliveira",
+                    age: 32,
+                    document: "456.789.123-22",
+                    bed: "Consultório 05",
+                    history: [
+                        { timestamp: "25/07 08:30", fc: 65, paSystolic: 110, paDiastolic: 70, spo2: 99, temp: 36.2 },
+                        { timestamp: "25/07 10:30", fc: 68, paSystolic: 112, paDiastolic: 72, spo2: 99, temp: 36.3 },
+                        { timestamp: "25/07 12:30", fc: 66, paSystolic: 110, paDiastolic: 70, spo2: 98, temp: 36.4 },
+                        { timestamp: "25/07 14:30", fc: 70, paSystolic: 115, paDiastolic: 75, spo2: 99, temp: 36.3 },
+                        { timestamp: "25/07 16:30", fc: 67, paSystolic: 112, paDiastolic: 72, spo2: 99, temp: 36.2 } // Todos os sinais normais
+                    ]
+                }
+            ]
+        };
+
+        /**
+         * FUNÇÃO AUXILIAR: VALIDAÇÃO DE SINAIS VITAIS CLÍNICOS
+         * O que faz: Compara os valores da última aferição do paciente com as faixas de referência clínica ajustadas.
+         * Qual o objetivo: Retornar 'true' se QUALQUER parâmetro estiver alterado (ex: PA fora do limite 90/60 - 140/90), acionando o alerta visual.
+         */
+        function checkAbnormalVitals(patient) {
+            if (!patient.history || patient.history.length === 0) return false;
+
+            // Obtém a última aferição registrada
+            const latest = patient.history[patient.history.length - 1];
+
+            // Intervalos Clínicos de Referência:
+            // FC: 60 - 100 BPM
+            // PA: Sistólica 90 - 140 mmHg e Diastólica 60 - 90 mmHg (NOVA REFERÊNCIA)
+            // SpO2: 95% - 100%
+            // Temp: 36.1 °C - 37.2 °C
+            const fcAbnormal = latest.fc < 60 || latest.fc > 100;
+            const paAbnormal = latest.paSystolic < 90 || latest.paSystolic > 140 || latest.paDiastolic < 60 || latest.paDiastolic > 90;
+            const spo2Abnormal = latest.spo2 < 95;
+            const tempAbnormal = latest.temp < 36.1 || latest.temp > 37.2;
+
+            return fcAbnormal || paAbnormal || spo2Abnormal || tempAbnormal;
+        }
+
+        /**
+         * ROTEADOR DA APLICAÇÃO (ROUTER):
+         * O que faz: Controla a renderização da tela atual dentro da div `#app`.
+         * Qual o objetivo: Atualizar a visualização conforme o estado e recriar os ícones Lucide.
+         */
+        function render() {
+            const app = document.getElementById('app');
+            app.innerHTML = ''; // Limpa o contêiner principal
+
+            if (state.currentPage === 'patients-list') {
+                renderPatientListPage(app);
+            } else if (state.currentPage === 'patient-monitoring') {
+                renderMonitoringPage(app);
+            }
+
+            // Inicializa os ícones SVG do Lucide
+            lucide.createIcons();
+        }
+
+        /**
+         * PÁGINA 1: LISTA DE PACIENTES COM ALERTA VISUAL DE SINAIS VITAIS
+         * O que faz: Constrói a listagem dos pacientes, identificando com um ícone de alerta aqueles com sinais vitais alterados.
+         * Qual o objetivo: Facilitar a triagem visual rápida pela equipe ambulatorial logo na tela principal.
+         */
+        function renderPatientListPage(container) {
+            const wrapper = document.createElement('div');
+            wrapper.className = 'space-y-6';
+
+            wrapper.innerHTML = `
+                <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-200 pb-4">
+                    <div>
+                        <h2 class="text-2xl font-bold text-slate-800">Painel de Pacientes</h2>
+                        <p class="text-sm text-slate-500">Selecione um paciente, cadastre novos registros ou gerencie a lista ambulatorial</p>
+                    </div>
+                    <div class="flex items-center gap-3">
+                        <span class="bg-indigo-100 text-indigo-700 text-xs font-semibold px-3 py-2 rounded-lg border border-indigo-200">
+                            Total: ${state.patients.length} Pacientes
+                        </span>
+                        <button onclick="togglePatientModal(true)" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg font-medium text-sm flex items-center gap-2 transition-colors shadow-sm">
+                            <i data-lucide="user-plus" class="w-4 h-4"></i>
+                            Novo Paciente
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Grelha de Exibição dos Cartões de Pacientes -->
+                <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4" id="patient-grid"></div>
+
+                <!-- MODAL DE CADASTRO DE NOVO PACIENTE -->
+                <div id="add-patient-modal" class="fixed inset-0 bg-slate-900/50 backdrop-blur-sm hidden flex items-center justify-center p-4 z-50">
+                    <div class="bg-white rounded-xl shadow-xl border border-slate-200 w-full max-w-md p-6 space-y-4">
+                        <div class="flex justify-between items-center border-b border-slate-100 pb-3">
+                            <h3 class="text-lg font-bold text-slate-800">Cadastrar Novo Paciente</h3>
+                            <button onclick="togglePatientModal(false)" class="text-slate-400 hover:text-slate-600">
+                                <i data-lucide="x" class="w-5 h-5"></i>
+                            </button>
+                        </div>
+
+                        <form id="patient-form" onsubmit="handleNewPatientSubmit(event)" class="space-y-4">
+                            <div>
+                                <label class="block text-xs font-semibold text-slate-600 mb-1">Nome Completo *</label>
+                                <input type="text" id="patient-name" required class="w-full border border-slate-300 rounded-lg p-2.5 text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none" placeholder="Ex: Carlos Eduardo Lima">
+                            </div>
+
+                            <div class="grid grid-cols-2 gap-3">
+                                <div>
+                                    <label class="block text-xs font-semibold text-slate-600 mb-1">Idade *</label>
+                                    <input type="number" id="patient-age" required min="0" max="130" class="w-full border border-slate-300 rounded-lg p-2.5 text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none" placeholder="Ex: 45">
+                                </div>
+                                <div>
+                                    <label class="block text-xs font-semibold text-slate-600 mb-1">Documento (CPF/RG) *</label>
+                                    <input type="text" id="patient-document" required class="w-full border border-slate-300 rounded-lg p-2.5 text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none" placeholder="Ex: 000.000.000-00">
+                                </div>
+                            </div>
+
+                            <div>
+                                <label class="block text-xs font-semibold text-slate-600 mb-1">Leito / Acomodação (Opcional)</label>
+                                <input type="text" id="patient-bed" class="w-full border border-slate-300 rounded-lg p-2.5 text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none" placeholder="Ex: Consultório 01 / Leito B">
+                            </div>
+
+                            <div class="flex justify-end gap-2 pt-3 border-t border-slate-100">
+                                <button type="button" onclick="togglePatientModal(false)" class="px-4 py-2 border border-slate-300 rounded-lg text-sm text-slate-600 hover:bg-slate-50">
+                                    Cancelar
+                                </button>
+                                <button type="submit" class="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-sm font-medium">
+                                    Salvar Cadastro
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            `;
+
+            container.appendChild(wrapper);
+
+            const grid = document.getElementById('patient-grid');
+
+            // Caso não haja pacientes cadastrados
+            if (state.patients.length === 0) {
+                grid.className = "col-span-full text-center py-12 bg-white rounded-xl border border-dashed border-slate-300";
+                grid.innerHTML = `
+                    <i data-lucide="users" class="w-12 h-12 text-slate-300 mx-auto mb-3"></i>
+                    <p class="text-slate-600 font-medium">Nenhum paciente cadastrado no momento.</p>
+                    <p class="text-xs text-slate-400 mt-1">Clique em "Novo Paciente" para realizar o primeiro cadastro.</p>
+                `;
+                return;
+            }
+
+            // Renderização iterativa de cada cartão de paciente
+            state.patients.forEach(patient => {
+                const lastMeasurement = patient.history.length > 0 ? patient.history[patient.history.length - 1] : null;
+                
+                // Avalia se o paciente possui sinais vitais fora do padrão
+                const hasAlert = checkAbnormalVitals(patient);
+
+                const card = document.createElement('div');
+                card.className = 'bg-white rounded-xl shadow-sm hover:shadow-md transition-shadow border border-slate-200 p-5 cursor-pointer flex flex-col justify-between group relative';
+                
+                // Evento de clique para navegação para a Página 2
+                card.onclick = () => selectPatient(patient.id);
+
+                card.innerHTML = `
+                    <div>
+                        <!-- Nome com Ícone de Alerta (!), Idade e Botão de Exclusão -->
+                        <div class="flex justify-between items-start mb-2 gap-2">
+                            <div class="flex items-center gap-2">
+                                <h3 class="text-lg font-bold text-slate-800 group-hover:text-indigo-600 transition-colors">
+                                    ${patient.name}
+                                </h3>
+                                
+                                <!-- ÍCONE DE PONTO DE EXCLAMAÇÃO (ALERTA DE SINAIS VITAIS ALTERADOS) -->
+                                ${hasAlert ? `
+                                    <span class="inline-flex items-center justify-center p-1 bg-amber-100 text-amber-600 rounded-full border border-amber-300" title="Atenção: A última medição apresenta sinais vitais fora da faixa de referência!">
+                                        <i data-lucide="alert-triangle" class="w-3.5 h-3.5"></i>
+                                    </span>
+                                ` : ''}
+                            </div>
+
+                            <div class="flex items-center gap-1.5 shrink-0">
+                                <span class="bg-slate-100 text-slate-600 text-xs px-2.5 py-1 rounded-full font-medium">
+                                    ${patient.age} anos
+                                </span>
+                                <!-- Botão de Exclusão de Paciente -->
+                                <button onclick="deletePatient(event, ${patient.id})" class="p-1 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-md transition-colors" title="Excluir paciente">
+                                    <i data-lucide="trash-2" class="w-4 h-4"></i>
+                                </button>
+                            </div>
+                        </div>
+                        
+                        <!-- Documento e Leito/Acomodação -->
+                        <div class="space-y-1 mb-4 text-xs text-slate-500">
+                            <div class="flex items-center gap-1.5">
+                                <i data-lucide="file-text" class="w-3.5 h-3.5 text-slate-400"></i>
+                                <span>Doc: <strong class="text-slate-700 font-medium">${patient.document}</strong></span>
+                            </div>
+                            <div class="flex items-center gap-1.5">
+                                <i data-lucide="bed" class="w-3.5 h-3.5 text-indigo-500"></i>
+                                <span>${patient.bed}</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Resumo da Última Leitura de Sinais Vitais -->
+                    <div class="bg-slate-50 p-3 rounded-lg border border-slate-100 text-xs text-slate-600 flex justify-between items-center">
+                        <div>
+                            <span class="block text-slate-400">Última Aferição:</span>
+                            <span class="font-semibold text-slate-700">${lastMeasurement ? lastMeasurement.timestamp : 'Sem medições'}</span>
+                        </div>
+                        <div class="flex items-center gap-1 text-indigo-600 font-medium">
+                            <span>Ver Detalhes</span>
+                            <i data-lucide="chevron-right" class="w-4 h-4"></i>
+                        </div>
+                    </div>
+                `;
+
+                grid.appendChild(card);
+            });
+        }
+
+        /**
+         * LÓGICA DE EXCLUSÃO DE PACIENTE:
+         * O que faz: Remove o paciente especificado do array global 'state.patients' após confirmação.
+         * Qual o objetivo: Permitir a exclusão individual do cadastro com controle de propagação de eventos (event.stopPropagation).
+         */
+        function deletePatient(event, patientId) {
+            event.stopPropagation(); // Evita abrir a Página 2 ao clicar na lixeira
+
+            const patient = state.patients.find(p => p.id === patientId);
+            if (!patient) return;
+
+            const confirmed = confirm(`Tem certeza que deseja excluir o paciente "${patient.name}" (Doc: ${patient.document})?\nEsta ação não poderá ser desfeita.`);
+            
+            if (confirmed) {
+                state.patients = state.patients.filter(p => p.id !== patientId);
+                if (state.selectedPatientId === patientId) {
+                    state.selectedPatientId = null;
+                }
+                render();
+            }
+        }
+
+        /**
+         * MANIPULADOR DE FORMULÁRIO: ADICIONAR NOVO PACIENTE
+         * O que faz: Captura os inputs do modal e registra o novo paciente.
+         * Qual o objetivo: Salvar novos registros no estado global da aplicação.
+         */
+        function handleNewPatientSubmit(event) {
+            event.preventDefault();
+
+            const nameInput = document.getElementById('patient-name').value.trim();
+            const ageInput = parseInt(document.getElementById('patient-age').value);
+            const docInput = document.getElementById('patient-document').value.trim();
+            const bedInput = document.getElementById('patient-bed').value.trim();
+
+            if (!nameInput || isNaN(ageInput) || !docInput) {
+                alert("Por favor, preencha todos os campos obrigatórios (*).");
+                return;
+            }
+
+            const newPatient = {
+                id: Date.now(),
+                name: nameInput,
+                age: ageInput,
+                document: docInput,
+                bed: bedInput || "Ambulatório Geral",
+                history: []
+            };
+
+            state.patients.push(newPatient);
+            togglePatientModal(false);
+            render();
+        }
+
+        /**
+         * CONTROLE DO MODAL DE CADASTRO DE PACIENTES
+         * O que faz: Abre ou fecha o modal de cadastro na Página 1.
+         * Qual o objetivo: Gerenciar a exibição do formulário sem navegação de tela.
+         */
+        function togglePatientModal(show) {
+            const modal = document.getElementById('add-patient-modal');
+            if (modal) {
+                if (show) {
+                    modal.classList.remove('hidden');
+                } else {
+                    modal.classList.add('hidden');
+                    document.getElementById('patient-form').reset();
+                }
+            }
+        }
+
+        /**
+         * NAVEGAÇÃO: SELEÇÃO DE PACIENTE
+         * O que faz: Atribui o ID do paciente e muda a rota ativa para a Página 2.
+         * Qual o objetivo: Redirecionar para a tela de monitoramento individual.
+         */
+        function selectPatient(patientId) {
+            state.selectedPatientId = patientId;
+            state.currentPage = 'patient-monitoring';
+            render();
+        }
+
+        /**
+         * PÁGINA 2: MONITORAMENTO E GRÁFICO DE SINAIS VITAIS
+         * O que faz: Exibe o perfil completo do paciente, os cartões da última leitura, o gráfico temporal e a opção de nova aferição.
+         * Qual o objetivo: Prover o detalhamento dos parâmetros de saúde do paciente e permitir novas medições.
+         */
+        function renderMonitoringPage(container) {
+            const patient = state.patients.find(p => p.id === state.selectedPatientId);
+            
+            if (!patient) {
+                state.currentPage = 'patients-list';
+                render();
+                return;
+            }
+
+            const last5Measurements = patient.history.slice(-5);
+            const latest = last5Measurements.length > 0 ? last5Measurements[last5Measurements.length - 1] : null;
+
+            const wrapper = document.createElement('div');
+            wrapper.className = 'space-y-6';
+
+            wrapper.innerHTML = `
+                <!-- Cabeçalho do Monitoramento -->
+                <div class="flex flex-col sm:flex-row justify-between sm:items-center gap-4 bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
+                    <div class="flex items-center gap-4">
+                        <button onclick="goBackToList()" class="p-2 text-slate-600 hover:text-indigo-600 hover:bg-slate-100 rounded-lg transition-colors" title="Voltar para a lista">
+                            <i data-lucide="arrow-left" class="w-6 h-6"></i>
+                        </button>
+                        <div>
+                            <h2 class="text-xl font-bold text-slate-800">${patient.name}</h2>
+                            <p class="text-xs text-slate-500">${patient.age} anos • Doc: <span class="font-medium text-slate-700">${patient.document}</span> • ${patient.bed}</p>
+                        </div>
+                    </div>
+                    
+                    <button onclick="toggleVitalModal(true)" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg font-medium text-sm flex items-center justify-center gap-2 transition-colors shadow-sm">
+                        <i data-lucide="plus-circle" class="w-4 h-4"></i>
+                        Nova Aferição
+                    </button>
+                </div>
+
+                <!-- CARDS DA ÚLTIMA MEDIÇÃO -->
+                <div>
+                    <div class="flex justify-between items-center mb-3">
+                        <h3 class="text-sm font-semibold text-slate-500 uppercase tracking-wider">Última Aferição Registrada</h3>
+                        <span class="text-xs text-slate-400 flex items-center gap-1">
+                            <i data-lucide="clock" class="w-3.5 h-3.5"></i> ${latest ? latest.timestamp : 'Sem registros'}
+                        </span>
+                    </div>
+
+                    <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+                        <div class="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex flex-col justify-between">
+                            <span class="text-xs text-slate-500 font-medium">Freq. Cardíaca (FC)</span>
+                            <div class="my-2 flex items-baseline gap-1">
+                                <span class="text-2xl font-extrabold text-rose-600">${latest ? latest.fc : '--'}</span>
+                                <span class="text-xs text-slate-400">BPM</span>
+                            </div>
+                            <span class="text-[10px] text-slate-400">Ref: 60-100 BPM</span>
+                        </div>
+
+                        <!-- Card Pressão Arterial com referência atualizada -->
+                        <div class="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex flex-col justify-between">
+                            <span class="text-xs text-slate-500 font-medium">Pressão Arterial (PA)</span>
+                            <div class="my-2 flex items-baseline gap-1">
+                                <span class="text-2xl font-extrabold text-indigo-600">
+                                    ${latest ? `${latest.paSystolic}/${latest.paDiastolic}` : '--'}
+                                </span>
+                                <span class="text-xs text-slate-400">mmHg</span>
+                            </div>
+                            <span class="text-[10px] text-slate-400">Ref: 90/60 - 140/90 mmHg</span>
+                        </div>
+
+                        <div class="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex flex-col justify-between">
+                            <span class="text-xs text-slate-500 font-medium">Saturação (SpO2)</span>
+                            <div class="my-2 flex items-baseline gap-1">
+                                <span class="text-2xl font-extrabold text-emerald-600">${latest ? latest.spo2 : '--'}</span>
+                                <span class="text-xs text-slate-400">%</span>
+                            </div>
+                            <span class="text-[10px] text-slate-400">Ref: 95-100%</span>
+                        </div>
+
+                        <div class="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex flex-col justify-between">
+                            <span class="text-xs text-slate-500 font-medium">Temperatura</span>
+                            <div class="my-2 flex items-baseline gap-1">
+                                <span class="text-2xl font-extrabold text-amber-600">${latest ? latest.temp : '--'}</span>
+                                <span class="text-xs text-slate-400">°C</span>
+                            </div>
+                            <span class="text-[10px] text-slate-400">Ref: 36.1 - 37.2 °C</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- SEÇÃO DO GRÁFICO (ÚLTIMAS 5 AFERIÇÕES) -->
+                <div class="bg-white p-5 rounded-xl border border-slate-200 shadow-sm space-y-4">
+                    <div class="flex justify-between items-center">
+                        <h3 class="text-base font-bold text-slate-800">Histórico Temporal (Últimas 5 Aferições)</h3>
+                        <span class="text-xs bg-slate-100 text-slate-600 px-2 py-1 rounded">Gráfico de Linhas</span>
+                    </div>
+                    
+                    <div class="relative w-full h-72">
+                        <canvas id="vitalsChart"></canvas>
+                    </div>
+                </div>
+
+                <!-- MODAL: ADICIONAR NOVA AFERIÇÃO DE SINAIS VITAIS -->
+                <div id="vital-modal" class="fixed inset-0 bg-slate-900/50 backdrop-blur-sm hidden flex items-center justify-center p-4 z-50">
+                    <div class="bg-white rounded-xl shadow-xl border border-slate-200 w-full max-w-md p-6 space-y-4">
+                        <div class="flex justify-between items-center border-b border-slate-100 pb-3">
+                            <h3 class="text-lg font-bold text-slate-800">Adicionar Sinais Vitais</h3>
+                            <button onclick="toggleVitalModal(false)" class="text-slate-400 hover:text-slate-600">
+                                <i data-lucide="x" class="w-5 h-5"></i>
+                            </button>
+                        </div>
+
+                        <form id="vital-form" onsubmit="handleNewVitalsSubmit(event)" class="space-y-4">
+                            <div class="grid grid-cols-2 gap-3">
+                                <div>
+                                    <label class="block text-xs font-semibold text-slate-600 mb-1">Freq. Cardíaca (BPM)</label>
+                                    <input type="number" id="input-fc" required min="30" max="220" class="w-full border border-slate-300 rounded-lg p-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none" placeholder="Ex: 75">
+                                </div>
+                                <div>
+                                    <label class="block text-xs font-semibold text-slate-600 mb-1">SpO2 (%)</label>
+                                    <input type="number" id="input-spo2" required min="50" max="100" class="w-full border border-slate-300 rounded-lg p-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none" placeholder="Ex: 98">
+                                </div>
+                            </div>
+
+                            <div class="grid grid-cols-2 gap-3">
+                                <div>
+                                    <label class="block text-xs font-semibold text-slate-600 mb-1">PA Sistólica (mmHg)</label>
+                                    <input type="number" id="input-pas" required min="50" max="250" class="w-full border border-slate-300 rounded-lg p-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none" placeholder="Ex: 120">
+                                </div>
+                                <div>
+                                    <label class="block text-xs font-semibold text-slate-600 mb-1">PA Diastólica (mmHg)</label>
+                                    <input type="number" id="input-pad" required min="30" max="150" class="w-full border border-slate-300 rounded-lg p-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none" placeholder="Ex: 80">
+                                </div>
+                            </div>
+
+                            <div>
+                                <label class="block text-xs font-semibold text-slate-600 mb-1">Temperatura (°C)</label>
+                                <input type="number" step="0.1" id="input-temp" required min="30" max="45" class="w-full border border-slate-300 rounded-lg p-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none" placeholder="Ex: 36.5">
+                            </div>
+
+                            <div class="flex justify-end gap-2 pt-2 border-t border-slate-100">
+                                <button type="button" onclick="toggleVitalModal(false)" class="px-4 py-2 border border-slate-300 rounded-lg text-sm text-slate-600 hover:bg-slate-50">
+                                    Cancelar
+                                </button>
+                                <button type="submit" class="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-sm font-medium">
+                                    Salvar Medição
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            `;
+
+            container.appendChild(wrapper);
+
+            // Renderiza o gráfico das 5 últimas leituras
+            initVitalsChart(last5Measurements);
+        }
+
+        /**
+         * RENDERIZADOR DO GRÁFICO (CHART.JS)
+         * O que faz: Desenha as linhas de tendência temporal para FC, PA Sistólica e SpO2.
+         * Qual o objetivo: Exibir visualmente o histórico de medições.
+         */
+        function initVitalsChart(measurements) {
+            const ctx = document.getElementById('vitalsChart');
+            if (!ctx) return;
+
+            if (state.chartInstance) {
+                state.chartInstance.destroy();
+            }
+
+            const labels = measurements.map(m => m.timestamp);
+            const fcData = measurements.map(m => m.fc);
+            const paSystolicData = measurements.map(m => m.paSystolic);
+            const spo2Data = measurements.map(m => m.spo2);
+
+            state.chartInstance = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: labels,
+                    datasets: [
+                        {
+                            label: 'Freq. Cardíaca (BPM)',
+                            data: fcData,
+                            borderColor: '#e11d48',
+                            backgroundColor: '#e11d4820',
+                            borderWidth: 2,
+                            tension: 0.3,
+                            fill: false
+                        },
+                        {
+                            label: 'PA Sistólica (mmHg)',
+                            data: paSystolicData,
+                            borderColor: '#4f46e5',
+                            backgroundColor: '#4f46e520',
+                            borderWidth: 2,
+                            tension: 0.3,
+                            fill: false
+                        },
+                        {
+                            label: 'SpO2 (%)',
+                            data: spo2Data,
+                            borderColor: '#059669',
+                            backgroundColor: '#05966920',
+                            borderWidth: 2,
+                            tension: 0.3,
+                            fill: false
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { position: 'top' },
+                        tooltip: { mode: 'index', intersect: false }
+                    },
+                    scales: {
+                        x: { grid: { display: false } },
+                        y: { beginAtZero: false, grid: { color: '#f1f5f9' } }
+                    }
+                }
+            });
+        }
+
+        /**
+         * MANIPULADOR DE FORMULÁRIO: ADICIONAR MEDIÇÃO DE SINAIS VITAIS
+         * O que faz: Adiciona a nova leitura ao histórico do paciente.
+         * Qual o objetivo: Atualizar os dados e reavaliar o estado de alerta do paciente em tempo real.
+         */
+        function handleNewVitalsSubmit(event) {
+            event.preventDefault();
+
+            const now = new Date();
+            const formattedDate = `${String(now.getDate()).padStart(2, '0')}/${String(now.getMonth() + 1).padStart(2, '0')} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+
+            const newReading = {
+                timestamp: formattedDate,
+                fc: parseInt(document.getElementById('input-fc').value),
+                paSystolic: parseInt(document.getElementById('input-pas').value),
+                paDiastolic: parseInt(document.getElementById('input-pad').value),
+                spo2: parseInt(document.getElementById('input-spo2').value),
+                temp: parseFloat(document.getElementById('input-temp').value)
+            };
+
+            const patient = state.patients.find(p => p.id === state.selectedPatientId);
+            if (patient) {
+                patient.history.push(newReading);
+            }
+
+            toggleVitalModal(false);
+            render();
+        }
+
+        /**
+         * CONTROLE DO MODAL DE MEDIÇÃO DE SINAIS VITAIS
+         * O que faz: Exibe ou oculta o modal de novas medições.
+         * Qual o objetivo: Gerenciar a caixa de diálogo de inserção de dados na Página 2.
+         */
+        function toggleVitalModal(show) {
+            const modal = document.getElementById('vital-modal');
+            if (modal) {
+                if (show) {
+                    modal.classList.remove('hidden');
+                } else {
+                    modal.classList.add('hidden');
+                }
+            }
+        }
+
+        /**
+         * NAVEGAÇÃO: RETORNO À PÁGINA 1
+         * O que faz: Retorna à lista principal de pacientes.
+         * Qual o objetivo: Desfazer a seleção atual e voltar ao painel de controle.
+         */
+        function goBackToList() {
+            state.currentPage = 'patients-list';
+            state.selectedPatientId = null;
+            render();
+        }
+
+        // INICIALIZAÇÃO DA APLICAÇÃO
+        document.addEventListener('DOMContentLoaded', () => {
+            render();
+        });
+    </script>
+</body>
+</html>
